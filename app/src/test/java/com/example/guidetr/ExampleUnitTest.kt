@@ -1,4 +1,4 @@
-package com.example.sosipa
+package com.example.guidetr
 
 import org.junit.Test
 

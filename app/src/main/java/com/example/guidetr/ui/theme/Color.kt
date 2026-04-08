@@ -1,4 +1,4 @@
-package com.example.sosipa.ui.theme
+package com.example.guidetr.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

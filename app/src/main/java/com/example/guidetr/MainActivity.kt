@@ -1,4 +1,4 @@
-package com.example.sosipa
+package com.example.guidetr
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -62,6 +63,7 @@ class MainActivity : ComponentActivity() {
     
     // 10 Audio Slots
     private var audioUris = mutableStateListOf<android.net.Uri?>(*Array(10) { null })
+    private var audioNames = mutableStateListOf<String?>(*Array(10) { null })
     private var currentSelectingIndex = -1
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -83,6 +85,7 @@ class MainActivity : ComponentActivity() {
                     e.printStackTrace()
                 }
                 audioUris[currentSelectingIndex] = it
+                audioNames[currentSelectingIndex] = queryFileName(it)
                 val sharedPref = getSharedPreferences("AudioPrefs", android.content.Context.MODE_PRIVATE)
                 with (sharedPref.edit()) {
                     putString("AUDIO_URI_$currentSelectingIndex", it.toString())
@@ -109,7 +112,9 @@ class MainActivity : ComponentActivity() {
         for (i in 0..9) {
             val uriString = sharedPref.getString("AUDIO_URI_$i", null)
             if (uriString != null) {
-                audioUris[i] = android.net.Uri.parse(uriString)
+                val uri = android.net.Uri.parse(uriString)
+                audioUris[i] = uri
+                audioNames[i] = queryFileName(uri)
             }
         }
 
@@ -140,6 +145,7 @@ class MainActivity : ComponentActivity() {
                     isAudioPaused = isAudioPaused.value,
                     playingIndex = currentlyPlayingIndex.value,
                     audioUris = audioUris,
+                    audioNames = audioNames,
                     onExit = {
                         finishAffinity()
                         exitProcess(0)
@@ -485,6 +491,26 @@ class MainActivity : ComponentActivity() {
         audioFileThread?.interrupt()
         audioFileThread = null
     }
+    
+    private fun queryFileName(uri: android.net.Uri): String? {
+        var name: String? = null
+        if (uri.scheme == "content") {
+            try {
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (nameIndex != -1) name = cursor.getString(nameIndex)
+                    }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+        if (name == null) {
+            name = uri.path
+            val cut = name?.lastIndexOf('/') ?: -1
+            if (cut != -1) name = name?.substring(cut + 1)
+        }
+        return name
+    }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -525,11 +551,11 @@ enum class AppScreen {
 fun WalkieTalkieTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            background = Color(0xFF121212),
-            surface = Color(0xFF1E1E1E),
-            primary = Color(0xFF007AFF), // Flat Blue to match the new logo
-            onPrimary = Color.White,
-            secondary = Color(0xFF555555),
+            background = Color(0xFF1D5D68),
+            surface = Color(0xFF26707B),
+            primary = Color(0xFFFFFFFF),
+            onPrimary = Color(0xFF1D5D68),
+            secondary = Color(0xFF164851),
             onSecondary = Color.White
         ),
         content = content
@@ -549,15 +575,15 @@ fun WalkieTalkieApp(
     isAudioPaused: Boolean,
     playingIndex: Int,
     audioUris: List<android.net.Uri?>,
+    audioNames: List<String?>,
     onExit: () -> Unit
 ) {
-    var currentScreen by remember { mutableStateOf(AppScreen.HOME) }
+    var currentScreen by remember { mutableStateOf(AppScreen.LEADER) }
 
     when (currentScreen) {
-        AppScreen.HOME -> HomeScreen(
-            onLeaderSelected = { currentScreen = AppScreen.LEADER },
-            onMemberSelected = { currentScreen = AppScreen.MEMBER }
-        )
+        AppScreen.HOME -> { /* No longer used */ 
+            currentScreen = AppScreen.LEADER
+        }
         AppScreen.LEADER -> ConnectionScreen(
             isLeader = true,
             onTalkToggled = onTalkToggled,
@@ -569,10 +595,11 @@ fun WalkieTalkieApp(
             isAudioPaused = isAudioPaused,
             playingIndex = playingIndex,
             audioUris = audioUris,
+            audioNames = audioNames,
             onExit = onExit,
             onStartListening = onStartListening,
             onStopListening = onStopListening,
-            onBack = { currentScreen = AppScreen.HOME }
+            onBack = { /* No back button needed */ }
         )
         AppScreen.MEMBER -> ConnectionScreen(
             isLeader = false,
@@ -588,7 +615,8 @@ fun WalkieTalkieApp(
             onExit = onExit,
             onStartListening = onStartListening,
             onStopListening = onStopListening,
-            onBack = { currentScreen = AppScreen.HOME }
+            onBack = { /* No back button needed */ },
+            audioNames = emptyList()
         )
     }
 }
@@ -607,9 +635,10 @@ fun WalkieTalkieScreen(
     isAudioPaused: Boolean,
     playingIndex: Int,
     audioUris: List<android.net.Uri?>,
+    audioNames: List<String?>,
     onExit: () -> Unit
 ) {
-   WalkieTalkieApp(onTalkToggled, onStartListening, onStopListening, onSelectAudio, onPlayAudio, onPauseAudio, onStopAudio, isPlayingAudio, isAudioPaused, playingIndex, audioUris, onExit)
+   WalkieTalkieApp(onTalkToggled, onStartListening, onStopListening, onSelectAudio, onPlayAudio, onPauseAudio, onStopAudio, isPlayingAudio, isAudioPaused, playingIndex, audioUris, audioNames, onExit)
 }
 
 @Composable
@@ -620,31 +649,42 @@ fun HomeScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.Center
+            .background(
+                brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = listOf(Color(0xFF1E293B), Color(0xFF0F172A))
+                )
+            )
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.app_logo),
+            contentDescription = "GuideTR Logo",
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(24.dp)
+                .size(260.dp)
+        )
+
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            verticalArrangement = Arrangement.Center
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.ancommnew),
-                contentDescription = "ANComm Logo",
-                modifier = Modifier
-                    .size(100.dp)
-                    .padding(bottom = 32.dp)
-            )
+            Spacer(modifier = Modifier.height(100.dp)) // Offset for the large logo
 
             Surface(
-                color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 48.dp)
+                color = Color.White.copy(alpha = 0.05f),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 48.dp)
             ) {
                 Text(
                     text = "사용자들은 모두 같은 핫스팟에 연결합니다. 인터넷이 없어도 됩니다.\n\n" +
                            "인솔자는 Leader를 누르고 다른 이들은 Member를 누릅니다. 리더만 말할 수 있습니다.\n\n" +
                            "서로 가까이 있으면 에코가 생길 수 있으니 이어폰을 사용하시기 추천드립니다.",
-                    color = Color.LightGray,
+                    color = Color.White.copy(alpha = 0.8f),
                     fontSize = 15.sp,
                     lineHeight = 24.sp,
                     modifier = Modifier.padding(24.dp)
@@ -657,20 +697,26 @@ fun HomeScreen(
             ) {
                 Button(
                     onClick = onLeaderSelected,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f).height(60.dp).padding(end = 8.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(64.dp)
+                        .padding(end = 8.dp)
                 ) {
-                    Text("Leader", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Leader", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
                 }
 
                 Button(
                     onClick = onMemberSelected,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f).height(60.dp).padding(start = 8.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.1f)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(64.dp)
+                        .padding(start = 8.dp)
                 ) {
-                    Text("Member", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Member", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                 }
             }
         }
@@ -689,6 +735,7 @@ fun ConnectionScreen(
     isAudioPaused: Boolean,
     playingIndex: Int,
     audioUris: List<android.net.Uri?>,
+    audioNames: List<String?>,
     onExit: () -> Unit,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
@@ -697,13 +744,11 @@ fun ConnectionScreen(
     val discoveryPort = 50006
     val magicWord = "GUIDE_PA_LEADER_HERE"
     
-    // Auto-fetch if Leader. If Member, start empty and auto-fill when broadcast found.
     val fetchedIp = remember { if (isLeader) getLocalIpAddress() else "" }
     var ipAddress by remember { mutableStateOf(fetchedIp) }
-    var isMicOn by remember { mutableStateOf(false) } // Toggle state
+    var isMicOn by remember { mutableStateOf(false) }
     var connectedStatus by remember { mutableStateOf(if (isLeader) "Hosting on $fetchedIp" else "Looking for Leader on Network...") }
 
-    // Stop mic when leaving current screen context
     DisposableEffect(Unit) {
         onDispose {
             if (isMicOn) {
@@ -713,12 +758,8 @@ fun ConnectionScreen(
         }
     }
 
-    // ----------------------------------------------------
-    // UDP Broadcaster / Listener Logic for Auto-Discovery
-    // ----------------------------------------------------
     LaunchedEffect(isLeader) {
         if (isLeader) {
-            // LEADER: Broadcast presence to network every 2 seconds
             launch(Dispatchers.IO) {
                 var socket: DatagramSocket? = null
                 try {
@@ -726,59 +767,41 @@ fun ConnectionScreen(
                     socket.broadcast = true
                     val message = magicWord.toByteArray()
                     val broadcastAddr = InetAddress.getByName("255.255.255.255")
-                    
                     while (true) {
                         val packet = DatagramPacket(message, message.size, broadcastAddr, discoveryPort)
                         socket.send(packet)
                         delay(2000)
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    socket?.close()
-                }
+                } catch (e: Exception) { e.printStackTrace() } finally { socket?.close() }
             }
         } else {
-            // MEMBER: Listen for Leader's broadcast
             launch(Dispatchers.IO) {
                 var socket: DatagramSocket? = null
                 try {
                     socket = DatagramSocket(discoveryPort)
                     socket.broadcast = true
                     val buffer = ByteArray(256)
-                    
                     while (ipAddress.isEmpty()) {
                         val packet = DatagramPacket(buffer, buffer.size)
                         socket.receive(packet)
-                        
                         val receivedMsg = String(packet.data, 0, packet.length).trim()
                         if (receivedMsg == magicWord) {
                             val leaderIp = packet.address.hostAddress
                             if (leaderIp != null) {
                                 ipAddress = leaderIp
                                 connectedStatus = "Connected to Leader"
-                                break // Stop checking once found
+                                break
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    socket?.close()
-                }
+                } catch (e: Exception) { e.printStackTrace() } finally { socket?.close() }
             }
         }
     }
 
     DisposableEffect(isLeader) {
-        if (!isLeader) {
-            onStartListening()
-        } else {
-            onStopListening()
-        }
-        onDispose {
-            onStopListening()
-        }
+        if (!isLeader) onStartListening() else onStopListening()
+        onDispose { onStopListening() }
     }
 
     val buttonScale by animateFloatAsState(
@@ -788,194 +811,165 @@ fun ConnectionScreen(
     )
 
     val buttonColor by animateColorAsState(
-        targetValue = if (isMicOn) Color(0xFFFF3366) else MaterialTheme.colorScheme.primary,
-        animationSpec = tween(durationMillis = 200),
+        targetValue = if (isMicOn) Color(0xFFEF4444) else Color(0xFF3B82F6),
+        animationSpec = tween(durationMillis = 300),
         label = "buttonColor"
     )
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color(0xFF1D5D68))
     ) {
-        // Back Button
-        TextButton(
-            onClick = onBack,
-            modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+        // MODERN HEADER
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
         ) {
-            Text("< Back", color = Color.Gray, fontSize = 16.sp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.app_logo),
+                    contentDescription = "Logo",
+                    modifier = Modifier
+                        .size(132.dp)
+                )
+
+                if (isLeader) {
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Button(
+                        onClick = {
+                            if (!isPlayingAudio || isAudioPaused) {
+                                isMicOn = !isMicOn
+                                onTalkToggled(isMicOn)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isPlayingAudio && !isAudioPaused) Color(0xFF334155) else buttonColor
+                        ),
+                        shape = RoundedCornerShape(32.dp),
+                        modifier = Modifier
+                            .size(132.dp)
+                            .scale(buttonScale)
+                            .shadow(if (isMicOn) 20.dp else 4.dp, RoundedCornerShape(32.dp), spotColor = buttonColor),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                painter = painterResource(id = if (isMicOn) android.R.drawable.stat_notify_chat else android.R.drawable.ic_btn_speak_now),
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp),
+                                tint = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (isPlayingAudio && !isAudioPaused) "OFF" else if (isMicOn) "TALK ON" else "PRESS TO\nTALK",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Black,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
         }
 
+        // CONTENT
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 32.dp, vertical = 64.dp)
+                .padding(horizontal = 24.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.ancommnew),
-                contentDescription = "ANComm Logo",
-                modifier = Modifier
-                    .size(120.dp)
-                    .padding(bottom = if (isLeader) 8.dp else 24.dp)
-            )
-
             if (isLeader) {
-                Text(
-                    text = "You are the leader",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(bottom = 24.dp)
-                )
-            }
-
-            Text(
-                text = connectedStatus,
-                color = if (connectedStatus.contains("Connected")) Color(0xFF00FF88) else Color.LightGray,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(bottom = 32.dp)
-            )
-
-            if (isLeader) {
-                // Toggle Mic Button
-                Button(
-                    onClick = {
-                        if (!isPlayingAudio || isAudioPaused) {
-                            isMicOn = !isMicOn
-                            onTalkToggled(isMicOn)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPlayingAudio && !isAudioPaused) Color.DarkGray else buttonColor
-                    ),
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .size(180.dp)
-                        .scale(buttonScale)
-                        .padding(bottom = 32.dp)
-                ) {
-                    Text(
-                        text = if (isPlayingAudio && !isAudioPaused) "MIC OFF\n(AUDIO PLAYING)" else if (isMicOn) "SPEAKER ON" else "SPEAKER OFF",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                Text(
-                    text = "Audio Clips",
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
+                Surface(
+                    color = Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            text = "Audio Library",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(bottom = 20.dp)
+                        )
 
-                // 10 Audio Selectors in 2 Columns
-                val chunkedAudio = (0..9).chunked(2)
-                for (rowIndex in chunkedAudio.indices) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        for (itemIndex in chunkedAudio[rowIndex]) {
-                            val uri = audioUris.getOrNull(itemIndex)
-                            val hasUri = uri != null
-                            val isThisSlotPlaying = isPlayingAudio && playingIndex == itemIndex
-                            
+                        val chunkedAudio = (0..9).chunked(2)
+                        for (rowIndex in chunkedAudio.indices) {
                             Row(
-                                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Button(
-                                    onClick = { onSelectAudio(itemIndex) },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isThisSlotPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                                    ),
-                                    modifier = Modifier.weight(1f).height(45.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(0.dp)
-                                ) {
-                                    Text(if (hasUri) "Loaded ${itemIndex + 1}" else "Audio ${itemIndex + 1}", fontSize = 12.sp)
-                                }
-                                
-                                Spacer(modifier = Modifier.width(4.dp))
-                                
-                                if (isThisSlotPlaying) {
-                                    // SHOW PAUSE AND STOP BUTTONS
-                                    Button(
-                                        onClick = { 
-                                            onPauseAudio() 
-                                            if (!isAudioPaused) {
-                                                // Transitioning to Paused: Turn Mic ON
-                                                if (!isMicOn) {
-                                                    isMicOn = true
-                                                    onTalkToggled(true)
-                                                }
-                                            } else {
-                                                // Transitioning to Play: Turn Mic OFF
-                                                if (isMicOn) {
-                                                    isMicOn = false
-                                                    onTalkToggled(false)
-                                                }
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isAudioPaused) Color.LightGray else Color(0xFFFF9800)
-                                        ),
-                                        modifier = Modifier.size(45.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(0.dp)
+                                for (itemIndex in chunkedAudio[rowIndex]) {
+                                    val uri = audioUris.getOrNull(itemIndex)
+                                    val hasUri = uri != null
+                                    val isThisSlotPlaying = isPlayingAudio && playingIndex == itemIndex
+                                    
+                                    Surface(
+                                        color = if (isThisSlotPlaying) Color(0xFF3B82F6).copy(alpha = 0.2f) else Color.White.copy(alpha = 0.05f),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.weight(1f)
                                     ) {
-                                        Text(if (isAudioPaused) "▶" else "⏸", fontSize = 16.sp)
-                                    }
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Button(
-                                        onClick = { 
-                                            onStopAudio() 
-                                            if (isMicOn) {
-                                                isMicOn = false
-                                                onTalkToggled(false)
+                                        Column(
+                                            modifier = Modifier.padding(8.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                IconButton(
+                                                    onClick = { onSelectAudio(itemIndex) },
+                                                    modifier = Modifier.size(40.dp).background(if (hasUri) Color(0xFF10B981) else Color.White.copy(alpha = 0.1f), CircleShape)
+                                                ) {
+                                                    Icon(
+                                                        painter = painterResource(id = if (hasUri) android.R.drawable.ic_menu_save else android.R.drawable.ic_input_add),
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                                
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                
+                                                IconButton(
+                                                    onClick = {
+                                                        if (isThisSlotPlaying) {
+                                                            if (isAudioPaused) onPauseAudio() else onPauseAudio() 
+                                                        } else if (hasUri) {
+                                                            if (isPlayingAudio) onStopAudio()
+                                                            onPlayAudio(uri!!, itemIndex)
+                                                        }
+                                                    },
+                                                    enabled = hasUri,
+                                                    modifier = Modifier.size(40.dp).background(if (isThisSlotPlaying) Color(0xFFF59E0B) else Color(0xFF3B82F6), CircleShape)
+                                                ) {
+                                                    Text(if (isThisSlotPlaying && !isAudioPaused) "⏸" else "▶", color = Color.White)
+                                                }
                                             }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-                                        modifier = Modifier.size(45.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(0.dp)
-                                    ) {
-                                        Text("■", fontSize = 16.sp)
-                                    }
-                                } else {
-                                    // SHOW PLAY BUTTON
-                                    Button(
-                                        onClick = {
-                                            if (isPlayingAudio) {
-                                                onStopAudio() // stop whatever else is playing
-                                            }
+                                            
                                             if (hasUri) {
-                                                // Ensure Mic is off before playing audio
-                                                if (isMicOn) {
-                                                    isMicOn = false
-                                                    onTalkToggled(false)
-                                                }
-                                                onPlayAudio(uri!!, itemIndex)
+                                                Text(
+                                                    text = audioNames.getOrNull(itemIndex) ?: "Unknown",
+                                                    color = Color.White.copy(alpha = 0.6f),
+                                                    fontSize = 10.sp,
+                                                    maxLines = 1,
+                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                                    modifier = Modifier.padding(top = 4.dp)
+                                                )
                                             }
-                                        },
-                                        enabled = hasUri && !isPlayingAudio,
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.primary,
-                                            disabledContainerColor = Color.DarkGray
-                                        ),
-                                        modifier = Modifier.size(45.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(0.dp)
-                                    ) {
-                                        Text("▶", fontSize = 18.sp)
+                                        }
                                     }
                                 }
                             }
@@ -983,42 +977,43 @@ fun ConnectionScreen(
                     }
                 }
             } else {
-                // Members just get a nice "Listening" visual instead of a button
+                Spacer(modifier = Modifier.height(60.dp))
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(220.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF222222))
+                        .size(240.dp)
+                        .scale(buttonScale)
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.sweepGradient(
+                                colors = listOf(Color(0xFF3B82F6), Color(0xFF0F172A), Color(0xFF3B82F6))
+                            ),
+                            shape = CircleShape
+                        )
+                        .padding(4.dp)
+                        .background(Color(0xFF0F172A), CircleShape)
                 ) {
                     Text(
-                        text = if (ipAddress.isNotEmpty()) "LISTENING..." else "WAITING...",
-                        color = if (ipAddress.isNotEmpty()) Color(0xFF00FF88) else Color.Gray,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
+                        text = if (ipAddress.isNotEmpty()) "LISTENING" else "CONNECTING",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
                         letterSpacing = 2.sp
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(64.dp))
+            Spacer(modifier = Modifier.height(48.dp))
 
             Button(
                 onClick = onExit,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSecondary
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.width(160.dp)
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.width(200.dp).height(56.dp)
             ) {
-                Text(
-                    text = "DISCONNECT",
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
+                Text("DISCONNECT", color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
             }
+            Spacer(modifier = Modifier.height(40.dp))
         }
     }
 }
