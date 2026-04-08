@@ -26,4 +26,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "GuideTR"
-include(":app")
+include(":composeApp")
